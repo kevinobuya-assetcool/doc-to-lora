@@ -20,6 +20,10 @@ CTX_AFFIXES = {
         # `<|im_end|>\n<|im_start|>assistant\n`
         "suffix": [151645, 198, 151644, 77091, 198],
     },
+    "google/gemma-4-E4B-it": {
+        "prefix": [2, 105, 2364, 107],  # `<bos><|turn>user\n`
+        "suffix": [106, 107, 105, 4368, 107],  # `<turn|>\n<|turn>model\n`
+    },
 }
 
 
