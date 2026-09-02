@@ -1,7 +1,9 @@
 import contextlib
 import logging
 import os
+import socket
 from copy import deepcopy
+from datetime import datetime
 from functools import partial
 
 import numpy as np
@@ -111,10 +113,11 @@ def main():
 
     # should be the same across processes
     # still possible to have a name crash though
-    # logging_dir is just "runs/DATE_TIME_HOSTNAME"
+    # DATE_TIME_HOSTNAME, as transformers<5 derived it for logging_dir
+    run_seed = datetime.now().strftime("%b%d_%H-%M-%S") + "_" + socket.gethostname()
     slurm_job_id = f"_{os.getenv('SLURM_JOB_ID')}" if os.getenv("SLURM_JOB_ID") else ""
     run_name = (
-        get_run_name(seed_str=training_args.logging_dir.strip("runs/") + slurm_job_id)
+        get_run_name(seed_str=run_seed + slurm_job_id)
         if not checkpoint_dir
         else checkpoint_dir.strip("/").split("/")[-2]
     )
@@ -131,7 +134,6 @@ def main():
     run_name = os.path.basename(output_dir)
     training_args.run_name = run_name
     training_args.output_dir = output_dir
-    training_args.logging_dir = output_dir
 
     if (
         training_args.lr_scheduler_type == "cosine_with_min_lr"

@@ -30,11 +30,28 @@ from transformers.utils import (
     logging,
 )
 
+logger = logging.get_logger(__name__)
+
+# flash-attn publishes no wheel for torch>=2.10, so fall back to the prebuilt hub kernel
+PERCEIVER_FLASH_ATTN_IMPLEMENTATION = (
+    "flash_attention_2" if is_flash_attn_2_available() else "kernels-community/flash-attn2"
+)
+
+
+def _normalize_attn_implementation(attn_implementation: str) -> str:
+    """Map a hub kernel repo id back onto the attention class it implements."""
+    return (
+        "flash_attention_2"
+        if attn_implementation == PERCEIVER_FLASH_ATTN_IMPLEMENTATION
+        else attn_implementation
+    )
+
 if is_flash_attn_2_available():
     from flash_attn.bert_padding import unpad_input
     from transformers.modeling_flash_attention_utils import _flash_attention_forward
-
-logger = logging.get_logger(__name__)
+else:
+    from transformers.modeling_flash_attention_utils import _flash_attention_forward
+    from transformers.modeling_flash_attention_utils import _unpad_input as unpad_input
 
 
 class Idefics2PerceiverConfig(PretrainedConfig):
@@ -156,6 +173,7 @@ class Idefics2PreTrainedModel(PreTrainedModel):
     ]
     _skip_keys_device_placement = "past_key_values"
     _supports_flash_attn_2 = True
+    _supports_flash_attn = True  # transformers>=5 dropped the _2 suffix
     _supports_sdpa = True
     _supports_cache_class = True
 
@@ -433,6 +451,7 @@ class Idefics2PerceiverFlashAttention2(Idefics2PerceiverAttention):
             sliding_window=None,
             is_causal=self.is_causal,
             use_top_left_mask=self._flash_attn_uses_top_left_mask,
+            attn_implementation=PERCEIVER_FLASH_ATTN_IMPLEMENTATION,
             **kwargs,
         )
 
@@ -470,7 +489,7 @@ class Idefics2PerceiverLayer(nn.Module):
             else torch.nn.Identity()
         )
         self.self_attn = IDEFICS2_PERCEIVER_ATTENTION_CLASSES[
-            config._attn_implementation
+            _normalize_attn_implementation(config._attn_implementation)
         ](config)
         self.post_attention_layernorm = Idefics2RMSNorm(
             self.hidden_size, eps=self.rms_norm_eps
@@ -611,8 +630,13 @@ class Idefics2PerceiverResampler(Idefics2PreTrainedModel):
 
         self.layernorm = Idefics2RMSNorm(self.hidden_size, eps=self.rms_norm_eps)
 
-        self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
-        assert self._use_flash_attention_2
+        self._use_flash_attention_2 = (
+            _normalize_attn_implementation(config._attn_implementation)
+            == "flash_attention_2"
+        )
+        assert self._use_flash_attention_2, (
+            "The perceiver resampler packs sequences via flash attention varlen."
+        )
 
     def forward(
         self,
@@ -651,7 +675,6 @@ class Idefics2PerceiverResampler(Idefics2PreTrainedModel):
                 context, attention_mask
             )
             context = context.unsqueeze(0)
-            position_ids = True  # goes down flash attn path that uses cu_seq_lens
 
         elif position_ids is not None:
             logger.warning_once("Using position ids for resampler")
@@ -676,19 +699,18 @@ class Idefics2PerceiverResampler(Idefics2PreTrainedModel):
 
         else:
             raise ValueError("either position_ids or attention_mask is required")
+        # position_ids are dropped on purpose: the cu_seq_lens already describe the packing,
+        # and transformers>=5 expects 2D position_ids when they are given
         x_attn_kwargs = dict(
-            position_ids=position_ids,
+            position_ids=None,
             cu_seq_lens_q=cu_seq_lens_q,
             cu_seq_lens_k=cu_seq_lens_k,
             max_length_q=max_length_q,
             max_length_k=max_length_k,
         )
-        self_attn_position_ids = torch.arange(
-            self.n_latents, device=context.device, dtype=torch.int32
-        ).repeat(1, bsz)
         self_attn_kwargs = dict(
             # attention_mask=self_attn_mask,
-            position_ids=self_attn_position_ids,
+            position_ids=None,
             cu_seq_lens_q=cu_seq_lens_q,
             cu_seq_lens_k=cu_seq_lens_q,
             max_length_q=max_length_q,

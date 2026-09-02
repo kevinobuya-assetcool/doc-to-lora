@@ -48,8 +48,10 @@ def extract_gemma4_text_model(model, model_name_or_path):
     text_model.model = model.model.language_model
     text_model.lm_head = model.lm_head
     text_model = text_model.to(model.device)
-    # the ctx encoder reloads the base model by this field
+    # the ctx encoder reloads the base model by this field, and the hypernet checkpoint
+    # records `name_or_path`, which is set from the config before we can override it
     text_model.config.name_or_path = model_name_or_path
+    text_model.name_or_path = model_name_or_path
     return text_model
 
 
