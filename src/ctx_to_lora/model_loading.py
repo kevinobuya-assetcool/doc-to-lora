@@ -11,6 +11,7 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
     Gemma3ForConditionalGeneration,
+    Gemma4ForCausalLM,
 )
 
 logger = logging.getLogger()
@@ -21,9 +22,35 @@ GEMMA_VISION_MODELS = [
     "google/gemma-3-27b-it",
 ]
 
+# Gemma 4 ships only multimodal checkpoints; we train on the text backbone alone.
+GEMMA4_MULTIMODAL_MODELS = [
+    "google/gemma-4-E2B-it",
+    "google/gemma-4-E4B-it",
+]
+
 
 def check_is_vision_model(model_name):
     return model_name in GEMMA_VISION_MODELS
+
+
+def check_is_gemma4_multimodal_model(model_name):
+    return model_name in GEMMA4_MULTIMODAL_MODELS
+
+
+def extract_gemma4_text_model(model, model_name_or_path):
+    """Rebuild a text-only causal LM from a loaded Gemma4ForConditionalGeneration.
+
+    The multimodal wrapper exposes neither `config.hidden_size` nor `model.layers`, and its
+    `down_proj` modules also match the vision tower, so LoRA and the hypernet cannot target
+    it directly.
+    """
+    text_model = Gemma4ForCausalLM(model.config.text_config)
+    text_model.model = model.model.language_model
+    text_model.lm_head = model.lm_head
+    text_model = text_model.to(model.device)
+    # the ctx encoder reloads the base model by this field
+    text_model.config.name_or_path = model_name_or_path
+    return text_model
 
 
 def get_model_and_tokenizer(
@@ -112,6 +139,7 @@ def get_model(
         use_cache=None,
     )
     is_vision_model = check_is_vision_model(model_name_or_path)
+    is_gemma4_model = check_is_gemma4_multimodal_model(model_name_or_path)
     if model_kwargs is not None:
         model_init_kwargs.update(model_kwargs)
 
@@ -124,6 +152,11 @@ def get_model(
             model_init_kwargs["attn_implementation"] = "flash_attention_2"
         elif "gte" in model_name_or_path:
             model_init_kwargs["attn_implementation"] = "sdpa"
+
+    if is_gemma4_model:
+        # flash-attn has no wheel for the torch version vllm pins
+        model_init_kwargs["attn_implementation"] = "sdpa"
+        model_init_kwargs.pop("use_cache")
 
     if is_vision_model:
         # always use sdpa for vision models
@@ -153,6 +186,8 @@ def get_model(
             model = AutoModel.from_pretrained(**model_init_kwargs)
         else:
             model = AutoModelForCausalLM.from_pretrained(**model_init_kwargs)
+            if is_gemma4_model:
+                model = extract_gemma4_text_model(model, model_name_or_path)
     else:
         model = Gemma3ForConditionalGeneration.from_pretrained(**model_init_kwargs)
         model = model.language_model
