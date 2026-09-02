@@ -1,0 +1,29 @@
+=== FACT RETENTION TEST SUITE ===
+
+[DOCUMENT_ID: FACT_001]
+Target System: System Aether-X
+Encryption Cipher: NTRU-Prime
+Maximum Latency: 12ms
+Emergency Override Code: ALPHA-7729
+Operational Frequency: 5.8 GHz
+
+---
+
+[DOCUMENT_ID: FACT_002]
+Hardware Target: K-90 Processor Array
+Core Count: 64 Tensor Cores
+Nominal Clock Speed: 3.2 GHz
+Nominal Power Consumption: 250W
+Thermal Throttling Threshold: 85°C
+Throttled Clock Speed: 1.8 GHz
+Throttled Power Consumption: 110W
+Maximum Operational Thermal Limit: 95°C
+
+---
+
+[DOCUMENT_ID: FACT_003]
+Jurisdiction: Sector 4
+Standard Q1 Tax Rate: 15%
+Solar Exemption Rate: 0% (Rule 9B)
+Violation Penalty Rate: 25% (Rule 12)
+Rule Precedence: Rule 12 supersedes Rule 9B on any compliance record fault.
