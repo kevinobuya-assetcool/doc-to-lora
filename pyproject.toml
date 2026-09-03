@@ -41,7 +41,8 @@ dependencies = [
     "opt-einsum>=3.4.0",
     "kagglehub[hf-datasets]>=0.3.12",
     "kaggle>=1.7.4.5",
-    "bitsandbytes>=0.46.1",
+    # 0.48.0 is the first release with CUDA 13 (cu130) prebuilt binaries
+    "bitsandbytes>=0.48.0",
     "google-cloud-storage>=3.2.0",
     "wonderwords>=2.2.0",
     "llmlingua>=0.2.2",
