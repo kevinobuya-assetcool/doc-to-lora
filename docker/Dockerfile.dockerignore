@@ -1,0 +1,39 @@
+# Dockerfile-specific ignore file (BuildKit convention: <dockerfile>.dockerignore
+# next to docker/Dockerfile), so this doesn't need to live at the repo root.
+.git/
+.claude/
+.venv/
+__pycache__/
+*.egg-info/
+.ipynb_checkpoints/
+.ruff_cache/
+.wandb/
+wandb/
+
+# Local-only data/outputs -- these are populated inside the container at
+# runtime from S3 (see docker/entrypoint.sh), never baked into the image.
+train_outputs/
+*outputs/
+eval_results/
+plots/
+tmp/
+data/raw_datasets/
+data/processed_datasets/
+data/distil/
+models/
+results/
+datasets/
+trained_d2l/
+openai_batches/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*tfevents*
+
+# Not needed for QA-gen/training jobs (verified: not imported by train.py,
+# self_generate_qa.py, or src/ctx_to_lora).
+webui/
+demo/
+examples/
+assets/
