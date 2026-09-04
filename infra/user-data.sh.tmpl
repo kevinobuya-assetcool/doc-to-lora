@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Rendered by submit_job.sh (placeholders substituted) and passed as a new
+# Launch Template version's UserData for a single job launch. Runs once at
+# boot via cloud-init, as root.
+set -euo pipefail
+
+LOG_FILE=/var/log/doc-to-lora-job.log
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "[user-data] job=__JOB_TYPE__ run_name=__RUN_NAME__ image=__IMAGE_URI__"
+
+AWS_REGION="__AWS_REGION__"
+aws ecr get-login-password --region "$AWS_REGION" \
+    | docker login --username AWS --password-stdin "$(echo __IMAGE_URI__ | cut -d/ -f1)"
+
+docker pull "__IMAGE_URI__"
+
+# --ipc=host + large --shm-size: PyTorch DataLoader workers and NCCL rely on
+# shared memory; Docker's 64MB default silently breaks multi-GPU/multi-worker
+# jobs (see infra/README.md).
+set +e
+docker run --rm --gpus all \
+    --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --shm-size=30g \
+    -e JOB_TYPE="__JOB_TYPE__" \
+    -e RUN_NAME="__RUN_NAME__" \
+    -e S3_BUCKET="__S3_BUCKET__" \
+    -e S3_PREFIX="__S3_PREFIX__" \
+    -e CONFIG_PATH="__CONFIG_PATH__" \
+    "__IMAGE_URI__" __EXTRA_ARGS__
+JOB_EXIT_CODE=$?
+set -e
+
+echo "[user-data] job exited with code ${JOB_EXIT_CODE}"
+
+if [[ -n "__S3_BUCKET__" ]]; then
+    aws s3 cp "$LOG_FILE" "s3://__S3_BUCKET__/__S3_PREFIX__/__JOB_TYPE__/__RUN_NAME__/logs/user-data.log" || true
+fi
+
+# One-shot training job -- terminate rather than idle-bill. Requires the
+# Launch Template's InstanceInitiatedShutdownBehavior=terminate (set in
+# infra/launch-template.json) since Spot capacity can only be terminated
+# anyway, not stopped.
+shutdown -h now
