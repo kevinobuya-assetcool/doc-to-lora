@@ -1,4 +1,5 @@
 import argparse
+import multiprocessing as mp
 import os
 import random
 import re
@@ -266,6 +267,13 @@ def self_generate(
     ]
 
     questions = [q_list for q_list in ds["prompts"] if len(q_list) > 0]
+
+    if args.limit_frac is not None:
+        n_keep = max(1, int(len(ctxs) * args.limit_frac))
+        ctxs = ctxs[:n_keep]
+        questions = questions[:n_keep]
+        ds = ds.select(range(n_keep))
+        print(f"--limit_frac={args.limit_frac}: keeping {n_keep} contexts")
 
     print(f"Loaded {len(ctxs)} contexts and {len(questions)} questions")
 
@@ -565,7 +573,82 @@ def parse_args() -> argparse.Namespace:
         default=256,
         help="Maximum number of new tokens to generate (default: 256)",
     )
+    parser.add_argument(
+        "--limit_frac",
+        type=float,
+        default=None,
+        help="If set, only process this fraction (0-1) of each dataset's contexts (for quick test runs)",
+    )
+    parser.add_argument(
+        "--num_gpus",
+        type=int,
+        default=1,
+        help=(
+            "Number of GPUs to data-parallelize across (default: 1, single-GPU "
+            "behavior unchanged). When > 1, the list of dataset configs/files to "
+            "process is split into --num_gpus shards, each processed by its own "
+            "worker process pinned to one GPU via CUDA_VISIBLE_DEVICES."
+        ),
+    )
+    parser.add_argument(
+        "--gpu_ids",
+        type=int,
+        nargs="+",
+        default=None,
+        help=(
+            "Explicit list of GPU indices to use (e.g. --gpu_ids 0 2 3). "
+            "Defaults to range(--num_gpus). Length must equal --num_gpus if provided."
+        ),
+    )
     return parser.parse_args()
+
+
+def _build_llm_kwargs(vllm_model: str) -> dict:
+    return dict(
+        model=vllm_model,
+        dtype="bfloat16",
+        enable_prefix_caching=True,
+        enable_chunked_prefill=True,
+        max_model_len=MODEL_CTX_LEN.get(vllm_model),
+        max_num_batched_tokens=32768,
+        max_num_seqs=128,  # raised from 32; KV cache has ample headroom (~78 GiB unused)
+    )
+
+
+def _process_dataset_configs(dataset_configs, args, llm) -> None:
+    for ds_name, split in dataset_configs:
+        print(f"Processing dataset: {ds_name}, split: {split}")
+        self_generate(
+            ds_name, split, args, llm, SELF_GEN_SYSTEM_MSG, None, args.do_truncate
+        )
+
+
+def _process_files(files, args, llm) -> None:
+    for file in files:
+        print(f"Processing file: {file}")
+        self_generate(
+            ds_name=None,
+            parquet_file=file,
+            split=args.split,
+            args=args,
+            llm=llm,
+            system_template=SELF_GEN_SYSTEM_MSG,
+            do_truncate=args.do_truncate,
+        )
+
+
+def _gpu_worker(gpu_id: int, work_items: list, is_files: bool, args, llm_kwargs: dict) -> None:
+    """Entry point for a single-GPU worker process. Pins the process to one GPU
+    via CUDA_VISIBLE_DEVICES (must be set before the LLM/CUDA context is
+    created) and then runs the normal sequential single-GPU code path on its
+    shard of work items."""
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    print(f"[gpu {gpu_id}] {len(work_items)} work item(s), llm_kwargs={llm_kwargs}")
+    llm = LLM(**llm_kwargs)
+    if is_files:
+        _process_files(work_items, args, llm)
+    else:
+        _process_dataset_configs(work_items, args, llm)
 
 
 if __name__ == "__main__":
@@ -574,52 +657,65 @@ if __name__ == "__main__":
     # Validate arguments
     if args.ds_names and not args.split:
         raise ValueError("--split is required when using --ds_names")
+    if args.num_gpus < 1:
+        raise ValueError("--num_gpus must be >= 1")
+    if args.gpu_ids is not None and len(args.gpu_ids) != args.num_gpus:
+        raise ValueError("--gpu_ids length must match --num_gpus")
 
     vllm_model = args.vllm_model
     print(f"Using model: {vllm_model}")
 
-    # Setup model-specific configurations
-    llm_kwargs = dict(
-        model=vllm_model,
-        dtype="bfloat16",
-        enable_prefix_caching=True,
-        enable_chunked_prefill=True,
-        max_model_len=MODEL_CTX_LEN.get(vllm_model),
-        max_num_batched_tokens=16384,
-        max_num_seqs=32,  # avoid oom when getting logprobs
-    )
-
-    print(f"{llm_kwargs=}")
-    llm = LLM(**llm_kwargs)
+    llm_kwargs = _build_llm_kwargs(vllm_model)
 
     # Get dataset configs from config or CLI args
     config = load_config(args.config) if args.config else None
     if args.ds_names or args.config:
-        dataset_configs = get_dataset_configs(
+        is_files = False
+        work_items = get_dataset_configs(
             ds_names=args.ds_names,
             config=config,
             split=args.split,
         )
-
-        # Process each dataset
-        for ds_name, split in dataset_configs:
-            print(f"Processing dataset: {ds_name}, split: {split}")
-            self_generate(
-                ds_name, split, args, llm, SELF_GEN_SYSTEM_MSG, None, args.do_truncate
-            )
     else:
         assert args.glob_pattern, (
             "glob_pattern must be provided if no ds_names or config"
         )
-        files = glob(args.glob_pattern)
-        for file in files:
-            print(f"Processing file: {file}")
-            self_generate(
-                ds_name=None,
-                parquet_file=file,
-                split=args.split,
-                args=args,
-                llm=llm,
-                system_template=SELF_GEN_SYSTEM_MSG,
-                do_truncate=args.do_truncate,
+        is_files = True
+        work_items = glob(args.glob_pattern)
+
+    if args.num_gpus == 1:
+        # Original single-process, single-GPU behavior (no multiprocessing overhead).
+        print(f"{llm_kwargs=}")
+        llm = LLM(**llm_kwargs)
+        if is_files:
+            _process_files(work_items, args, llm)
+        else:
+            _process_dataset_configs(work_items, args, llm)
+    else:
+        gpu_ids = args.gpu_ids if args.gpu_ids is not None else list(range(args.num_gpus))
+        # Split work round-robin across GPUs so each shard's item count differs by at most one.
+        shards = [work_items[i :: args.num_gpus] for i in range(args.num_gpus)]
+        for gpu_id, shard in zip(gpu_ids, shards):
+            print(f"GPU {gpu_id}: {len(shard)} work item(s)")
+
+        mp.set_start_method("spawn", force=True)
+        processes = []
+        for gpu_id, shard in zip(gpu_ids, shards):
+            if not shard:
+                continue
+            p = mp.Process(
+                target=_gpu_worker,
+                args=(gpu_id, shard, is_files, args, llm_kwargs),
+            )
+            p.start()
+            processes.append(p)
+
+        failures = []
+        for p in processes:
+            p.join()
+            if p.exitcode != 0:
+                failures.append(p.pid)
+        if failures:
+            raise RuntimeError(
+                f"{len(failures)} GPU worker process(es) failed (pids={failures})"
             )
