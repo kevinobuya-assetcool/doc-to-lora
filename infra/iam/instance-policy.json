@@ -5,14 +5,14 @@
       "Sid": "JobBucketReadWrite",
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-      "Resource": "arn:aws:s3:::__S3_BUCKET__/__S3_PREFIX__/*"
+      "Resource": "arn:aws:s3:::doc-to-lora-jobs/dev/*"
     },
     {
       "Sid": "JobBucketList",
       "Effect": "Allow",
       "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::__S3_BUCKET__",
-      "Condition": { "StringLike": { "s3:prefix": ["__S3_PREFIX__/*"] } }
+      "Resource": "arn:aws:s3:::doc-to-lora-jobs",
+      "Condition": { "StringLike": { "s3:prefix": ["dev/*"] } }
     },
     {
       "Sid": "PullJobImage",
