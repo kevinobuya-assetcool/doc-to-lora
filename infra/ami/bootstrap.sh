@@ -23,7 +23,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
-    build-essential dkms linux-headers-"$(uname -r)" ca-certificates curl gnupg unzip
+    build-essential dkms linux-headers-"$(uname -r)" ca-certificates curl gnupg unzip git zsh
 
 # --- NVIDIA driver, from NVIDIA's CUDA network repo (not AWS's gaming/GRID S3 buckets) ---
 curl -fsSL -o /tmp/cuda-keyring.deb \
@@ -56,9 +56,27 @@ unzip -q /tmp/awscliv2.zip -d /tmp
 sudo /tmp/aws/install
 rm -rf /tmp/awscliv2.zip /tmp/aws
 
+# --- zsh + oh-my-zsh + plugins, set as ubuntu's default shell ---
+# Unattended install: skip the launch-a-shell and chsh prompts (chsh done
+# explicitly below via `sudo`, since the non-sudo omz installer can't).
+RUNZSH=no CHSH=no KEEP_ZSHRC=no \
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+
+git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions \
+    "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting \
+    "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+sed -i 's/^plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting)/' "$HOME/.zshrc"
+
+sudo chsh -s "$(command -v zsh)" ubuntu
+
+# --- uv (installed last so its installer's PATH line lands in the .zshrc above) ---
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 echo
 echo "Driver install requires a reboot before nvidia-smi/docker --gpus will work."
 echo "After rebooting, validate with:"
 echo "  nvidia-smi"
 echo "  docker run --rm --gpus all nvidia/cuda:13.0.3-base-ubuntu24.04 nvidia-smi"
 echo "Only snapshot the AMI after both of those succeed."
+echo "zsh is now ubuntu's default shell -- takes effect on the next login, no reboot needed."
