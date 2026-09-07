@@ -59,8 +59,23 @@ if [[ "$JOB_TYPE" == "train" && -z "$CONFIG_PATH" ]]; then
     echo "--config-path is required for --job-type train" >&2; exit 1
 fi
 
+IFS=',' read -ra SUBNET_ARR <<< "$SUBNETS"
+if ! SUBNET_ERR="$(aws ec2 describe-subnets --region "$AWS_REGION" --subnet-ids "${SUBNET_ARR[@]}" 2>&1 >/dev/null)"; then
+    echo "Invalid subnet(s) in --subnets ${SUBNETS}:" >&2
+    echo "$SUBNET_ERR" >&2
+    exit 1
+fi
+
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+if ! ECR_ERR="$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --region "$AWS_REGION" \
+        --image-ids imageTag="$IMAGE_TAG" 2>&1 >/dev/null)"; then
+    echo "Image tag '${IMAGE_TAG}' not found in ECR repository '${ECR_REPOSITORY}' (region ${AWS_REGION})." >&2
+    echo "Push it first: docker/build_and_push.sh   (also pushes 'latest')" >&2
+    echo "Or list available tags: aws ecr list-images --repository-name ${ECR_REPOSITORY} --region ${AWS_REGION}" >&2
+    exit 1
+fi
 
 # Render user-data from the template, then base64-encode for the API.
 USER_DATA="$(sed \

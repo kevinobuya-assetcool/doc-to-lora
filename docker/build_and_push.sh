@@ -13,6 +13,7 @@ TAG="${1:-$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --short HEAD)}"
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY}:${TAG}"
+LATEST_URI="${REGISTRY}/${ECR_REPOSITORY}:latest"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -22,6 +23,9 @@ aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" --region "$AW
 aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
 
 docker build -f "$REPO_ROOT/docker/Dockerfile" -t "$IMAGE_URI" "$REPO_ROOT"
+docker tag "$IMAGE_URI" "$LATEST_URI"
 docker push "$IMAGE_URI"
+docker push "$LATEST_URI"
 
 echo "Pushed ${IMAGE_URI}"
+echo "Pushed ${LATEST_URI}"
