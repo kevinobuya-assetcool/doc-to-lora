@@ -5,6 +5,8 @@
 set -euo pipefail
 
 LOG_FILE=/var/log/doc-to-lora-job.log
+LOG_S3_URI="s3://__S3_BUCKET__/__S3_PREFIX__/__JOB_TYPE__/__RUN_NAME__/logs/user-data.log"
+LOG_SYNC_INTERVAL_SEC=15
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "[user-data] job=__JOB_TYPE__ run_name=__RUN_NAME__ image=__IMAGE_URI__"
@@ -14,6 +16,18 @@ aws ecr get-login-password --region "$AWS_REGION" \
     | docker login --username AWS --password-stdin "$(echo __IMAGE_URI__ | cut -d/ -f1)"
 
 docker pull "__IMAGE_URI__"
+
+# Push the still-growing log to S3 every LOG_SYNC_INTERVAL_SEC while the job
+# runs, so progress is visible before the post-shutdown upload below -- that
+# one only happens once the container has already exited.
+LOG_SYNC_PID=""
+if [[ -n "__S3_BUCKET__" ]]; then
+    ( while true; do
+          sleep "$LOG_SYNC_INTERVAL_SEC"
+          aws s3 cp "$LOG_FILE" "$LOG_S3_URI" || true
+      done ) &
+    LOG_SYNC_PID=$!
+fi
 
 # --ipc=host + large --shm-size: PyTorch DataLoader workers and NCCL rely on
 # shared memory; Docker's 64MB default silently breaks multi-GPU/multi-worker
@@ -32,8 +46,10 @@ set -e
 
 echo "[user-data] job exited with code ${JOB_EXIT_CODE}"
 
+[[ -n "$LOG_SYNC_PID" ]] && kill "$LOG_SYNC_PID" 2>/dev/null || true
+
 if [[ -n "__S3_BUCKET__" ]]; then
-    aws s3 cp "$LOG_FILE" "s3://__S3_BUCKET__/__S3_PREFIX__/__JOB_TYPE__/__RUN_NAME__/logs/user-data.log" || true
+    aws s3 cp "$LOG_FILE" "$LOG_S3_URI" || true
 fi
 
 # One-shot training job -- terminate rather than idle-bill. Requires the
