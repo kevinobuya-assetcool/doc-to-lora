@@ -8,7 +8,7 @@
     "BlockDeviceMappings": [
       {
         "DeviceName": "/dev/sda1",
-        "Ebs": { "VolumeSize": 100, "VolumeType": "gp3", "DeleteOnTermination": true }
+        "Ebs": { "VolumeSize": 200, "VolumeType": "gp3", "DeleteOnTermination": true }
       }
     ],
     "TagSpecifications": [
