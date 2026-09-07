@@ -1,9 +1,9 @@
 {
   "LaunchTemplateName": "doc-to-lora-job",
   "LaunchTemplateData": {
-    "ImageId": "__GOLDEN_AMI_ID__",
-    "IamInstanceProfile": { "Name": "__INSTANCE_PROFILE_NAME__" },
-    "SecurityGroupIds": ["__SECURITY_GROUP_ID__"],
+    "ImageId": "ami-0776211ff56203e17",
+    "IamInstanceProfile": { "Name": "doc-to-lora-job" },
+    "SecurityGroupIds": ["sg-0e85f1bb511bce54c"],
     "InstanceInitiatedShutdownBehavior": "terminate",
     "BlockDeviceMappings": [
       {
