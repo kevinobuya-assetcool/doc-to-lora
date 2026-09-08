@@ -47,6 +47,10 @@ s3_uri() { # $1 = subpath, e.g. "output"
     echo "s3://${S3_BUCKET}/${S3_PREFIX%/}/${JOB_TYPE}/${RUN_NAME}/${1}"
 }
 
+shared_s3_uri() { # $1 = subpath, e.g. "fw_qa_v2" -- job-run-independent, unlike s3_uri()
+    echo "s3://${S3_BUCKET}/${S3_PREFIX%/}/inputs/${1}"
+}
+
 sync_up() { # $1 = local dir, $2 = subpath
     [[ -z "$S3_BUCKET" || ! -d "$1" ]] && return 0
     aws s3 sync "$1" "$(s3_uri "$2")" --only-show-errors
@@ -99,6 +103,13 @@ WATCHER_PID=$!
 
 case "$JOB_TYPE" in
     qa_gen)
+        if [[ -n "$S3_BUCKET" ]]; then
+            aws s3 sync "$(shared_s3_uri "fw_qa_v2")" "data/raw_datasets/fw_qa_v2"
+        fi
+        if [[ -z "$(find data/raw_datasets/fw_qa_v2 -name '*.parquet' -print -quit 2>/dev/null)" ]]; then
+            echo "[entrypoint] no fw_qa_v2 parquet files found after S3 sync -- aborting" >&2
+            exit 1
+        fi
         sync_down "output" "data/raw_datasets/self_gen"
         "$PY" data/self_generate_qa.py --num_gpus "$NUM_GPUS" "$@" &
         CHILD_PID=$!
