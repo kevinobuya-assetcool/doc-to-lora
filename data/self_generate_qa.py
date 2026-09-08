@@ -3,6 +3,7 @@ import multiprocessing as mp
 import os
 import random
 import re
+import time
 from glob import glob
 
 import numpy as np
@@ -353,6 +354,8 @@ def execute_qa_generation(
     messages,
     k,
 ):
+    n_messages = len(messages)
+    gen_start = time.time()
     completions = llm.chat(
         messages,
         sampling_params=SamplingParams(
@@ -364,6 +367,11 @@ def execute_qa_generation(
             skip_special_tokens=False,
             include_stop_str_in_output=True,
         ),
+    )
+    gen_elapsed = time.time() - gen_start
+    print(
+        f"[timing] llm.chat: {n_messages} messages, max_new_tokens={args.max_new_tokens}, "
+        f"elapsed={gen_elapsed:.2f}s, msgs/s={n_messages / gen_elapsed:.2f}"
     )
 
     self_gen_data = {
