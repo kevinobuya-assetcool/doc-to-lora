@@ -56,7 +56,6 @@ rebuilding when the app code changes (that's a new image tag, not a new AMI).
 aws iam create-role --role-name doc-to-lora-job \
   --assume-role-policy-document file://infra/iam/ec2-trust-policy.json
 
-# fill in __S3_BUCKET__ / __S3_PREFIX__ in instance-policy.json first
 aws iam put-role-policy --role-name doc-to-lora-job \
   --policy-name doc-to-lora-job-access \
   --policy-document file://infra/iam/instance-policy.json
@@ -67,7 +66,13 @@ aws iam add-role-to-instance-profile \
 ```
 
 Scoped to just the job bucket/prefix and ECR image pulls -- no static
-credentials anywhere in the image or AMI.
+credentials anywhere in the image or AMI. `infra/iam/instance-policy.json`
+already has this project's real bucket/prefix baked in
+(`doc-to-lora-jobs`, `dev/*`) rather than template placeholders -- **every
+job must be submitted with `S3_PREFIX=dev`** (see below); `submit_job.sh`
+otherwise defaults `S3_PREFIX` to `doc-to-lora`, which this role has no
+access to and which fails the job with `AccessDenied` on every S3 write,
+after several minutes of GPU-instance boot/model-load time already spent.
 
 ### 4. Create the Launch Template
 
@@ -87,12 +92,16 @@ root volume) inherited from this default version.
 ## Submitting a job
 
 ```
-export AWS_REGION=us-east-1 ECR_REPOSITORY=doc-to-lora S3_BUCKET=my-bucket
+export AWS_REGION=us-east-2 ECR_REPOSITORY=doc-to-lora S3_BUCKET=doc-to-lora-jobs S3_PREFIX=dev
+
+# Subnets for this project (different AZs, so the Fleet request can fall
+# back if one AZ is out of G7e Spot capacity):
+SUBNETS=subnet-02cd0f69de4c45f27,subnet-0ffc1d7ffc780a921,subnet-0063232b3d9188b5f
 
 # Training -- matches accelerate_config.yaml's num_processes=8 default 1:1
 # with g7e.48xlarge's 8 GPUs, no code changes needed for the top-end case.
 infra/submit_job.sh --job-type train --instance-type g7e.48xlarge \
-  --subnets subnet-aaa,subnet-bbb,subnet-ccc \
+  --subnets "$SUBNETS" \
   --config-path configs/main_exp/gemma4/self_gen_lv1_closed_qa_1_l2l.yaml \
   -- --model_name_or_path=google/gemma-4-E4B-it --target_modules=down_proj \
      --lora_r=8 --max_steps=100 --gradient_accumulation_steps=8
@@ -101,10 +110,17 @@ infra/submit_job.sh --job-type train --instance-type g7e.48xlarge \
 # KV cache, not compute-bound; scale throughput with more concurrent
 # instances/shards rather than a bigger box.
 infra/submit_job.sh --job-type qa_gen --instance-type g7e.8xlarge \
-  --subnets subnet-aaa \
+  --subnets "$SUBNETS" \
   -- --vllm_model=google/gemma-4-E4B-it --glob_pattern="data/raw_datasets/fw_qa_v2/*" \
      --closed_qa_prob=1.0
 ```
+
+`S3_PREFIX` **must** be set to `dev` -- `submit_job.sh` defaults it to
+`doc-to-lora` if unset, which the instance's IAM role (see step 3 above)
+has no access to. Getting this wrong doesn't fail fast: the instance boots,
+pulls the image, loads the model, and only then fails every S3 write with
+`AccessDenied`, burning several minutes of (often on-demand, GPU-hour-billed)
+time before self-terminating with exit code 1.
 
 Listing multiple `--subnets` (different AZs) lets the Fleet request fall
 back if one AZ is out of G7e Spot capacity -- this is a newer instance
