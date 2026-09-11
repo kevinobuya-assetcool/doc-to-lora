@@ -94,6 +94,16 @@ root volume) inherited from this default version.
 ```
 export AWS_REGION=us-east-2 ECR_REPOSITORY=doc-to-lora S3_BUCKET=doc-to-lora-jobs S3_PREFIX=dev
 
+# Optional: a TEMPORARY, READ-ONLY HuggingFace token. Authenticates every
+# GPU worker's tokenizer/model download and avoids the anonymous-request
+# instability (RemoteProtocolError / rate limiting) that caused a partial
+# worker crash in production. Embedded in PLAINTEXT in this job's EC2
+# Launch Template version -- readable via ec2:DescribeLaunchTemplateVersions
+# for as long as that version exists. Create at
+# https://huggingface.co/settings/tokens (read-only scope) and revoke once
+# the job's model/tokenizer load has completed.
+export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
 # Subnets for this project (different AZs, so the Fleet request can fall
 # back if one AZ is out of G7e Spot capacity):
 SUBNETS=subnet-02cd0f69de4c45f27,subnet-0ffc1d7ffc780a921,subnet-0063232b3d9188b5f
@@ -162,5 +172,12 @@ mean changing that script, not just infra).
   repo") rather than a hardcoded version -- re-verify with `nvidia-smi`
   after any AMI rebuild.
 - `google/gemma-4-E4B-it` is not gated (confirmed via an unauthenticated
-  `HEAD` request during local testing), but setting `HF_TOKEN` is still
-  recommended for rate limits on repeated job launches.
+  `HEAD` request during local testing), but concurrent unauthenticated Hub
+  requests from multiple GPU worker processes on one instance have caused
+  `RemoteProtocolError`/tokenizer-load crashes in production. Set `HF_TOKEN`
+  (see "Submitting a job" above) -- wired end-to-end via `submit_job.sh` ->
+  `user-data.sh.tmpl` -> `docker run -e HF_TOKEN`. Use a temporary,
+  read-only token and revoke it after the job completes: it is stored in
+  PLAINTEXT in the EC2 Launch Template version created for that job, which
+  persists until manually deleted, independent of the token's own
+  expiry/revocation.

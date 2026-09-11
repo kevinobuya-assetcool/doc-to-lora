@@ -25,6 +25,7 @@ AWS_REGION="${AWS_REGION:?set AWS_REGION}"
 ECR_REPOSITORY="${ECR_REPOSITORY:?set ECR_REPOSITORY}"
 S3_BUCKET="${S3_BUCKET:?set S3_BUCKET}"
 S3_PREFIX="${S3_PREFIX:-doc-to-lora}"
+HF_TOKEN="${HF_TOKEN:-}"
 LAUNCH_TEMPLATE_NAME="${LAUNCH_TEMPLATE_NAME:-doc-to-lora-job}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 
@@ -77,6 +78,14 @@ if ! ECR_ERR="$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --re
     exit 1
 fi
 
+if [[ -n "$HF_TOKEN" ]]; then
+    echo "WARNING: HF_TOKEN is set and will be embedded in plaintext in this" >&2
+    echo "  job's EC2 Launch Template *version* UserData. Anyone with" >&2
+    echo "  ec2:DescribeLaunchTemplateVersions in this account can read it." >&2
+    echo "  Use only a TEMPORARY, READ-ONLY, revocable token, and revoke it" >&2
+    echo "  once this job's model/tokenizer load has completed." >&2
+fi
+
 # Render user-data from the template, then base64-encode for the API.
 USER_DATA="$(sed \
     -e "s#__JOB_TYPE__#${JOB_TYPE}#g" \
@@ -85,6 +94,7 @@ USER_DATA="$(sed \
     -e "s#__AWS_REGION__#${AWS_REGION}#g" \
     -e "s#__S3_BUCKET__#${S3_BUCKET}#g" \
     -e "s#__S3_PREFIX__#${S3_PREFIX}#g" \
+    -e "s#__HF_TOKEN__#${HF_TOKEN}#g" \
     -e "s#__CONFIG_PATH__#${CONFIG_PATH}#g" \
     -e "s#__EXTRA_ARGS__#${EXTRA_ARGS[*]}#g" \
     "$REPO_ROOT/infra/user-data.sh.tmpl")"

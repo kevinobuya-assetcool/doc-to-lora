@@ -51,6 +51,7 @@ docker run --rm --gpus all \
     -e RUN_NAME="__RUN_NAME__" \
     -e S3_BUCKET="__S3_BUCKET__" \
     -e S3_PREFIX="__S3_PREFIX__" \
+    -e HF_TOKEN="__HF_TOKEN__" \
     -e CONFIG_PATH="__CONFIG_PATH__" \
     "__IMAGE_URI__" __EXTRA_ARGS__
 JOB_EXIT_CODE=$?
